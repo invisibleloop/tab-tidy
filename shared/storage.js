@@ -61,3 +61,24 @@ export async function getTheme() {
 export async function saveTheme(theme) {
   await chrome.storage.local.set({ [STORAGE_KEYS.theme]: theme });
 }
+
+// sidePanelSort: { [ruleId]: 'default' | 'az' | 'za' } — each rule
+// remembers its own sort preference in the side panel. Older versions
+// stored this as a single string rather than a per-rule map; treat any
+// non-object leftover value as if nothing was stored yet.
+function normalizeSidePanelSorts(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+export async function getSidePanelSort(ruleId) {
+  const result = await chrome.storage.local.get(STORAGE_KEYS.sidePanelSort);
+  const sorts = normalizeSidePanelSorts(result[STORAGE_KEYS.sidePanelSort]);
+  return sorts[ruleId] || 'default';
+}
+
+export async function saveSidePanelSort(ruleId, sort) {
+  const result = await chrome.storage.local.get(STORAGE_KEYS.sidePanelSort);
+  const sorts = normalizeSidePanelSorts(result[STORAGE_KEYS.sidePanelSort]);
+  sorts[ruleId] = sort;
+  await chrome.storage.local.set({ [STORAGE_KEYS.sidePanelSort]: sorts });
+}

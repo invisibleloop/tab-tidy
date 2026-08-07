@@ -159,45 +159,50 @@ export async function applyGroupRules({ automatic = false } = {}) {
       if (tabs.length === 0) continue;
       const tabIds = tabs.map((t) => t.id);
 
-      if (groupIsValid) {
-        // Only move tabs that aren't already in this group
-        const tabsToMove = tabs.filter((t) => t.groupId !== existingGroupId);
-        if (tabsToMove.length > 0) {
-          await chrome.tabs.group({ tabIds: tabsToMove.map((t) => t.id), groupId: existingGroupId });
-          for (const t of tabsToMove) movedTabIds.add(t.id);
-        }
-        groupId = existingGroupId;
-      } else {
-        // No group tracked for this rule yet. Before creating a new one,
-        // check for an unmanaged tab group in this window with the exact
-        // same name — likely left behind by a deleted/recreated rule of
-        // the same name — and adopt it instead of making a duplicate.
-        const adoptable = await findAdoptableGroup(windowId, rule.name, ruleGroupIds);
-        if (adoptable !== null) {
-          groupId = adoptable;
-          const tabsToMove = tabs.filter((t) => t.groupId !== groupId);
+      // A tab can vanish between being queried above and being grouped
+      // here (closed by the user, or by dedupe just above). Any Chrome
+      // API call in this block can then throw — catch it per-window/rule
+      // so one stale tab doesn't abort processing for every other rule.
+      try {
+        if (groupIsValid) {
+          // Only move tabs that aren't already in this group
+          const tabsToMove = tabs.filter((t) => t.groupId !== existingGroupId);
           if (tabsToMove.length > 0) {
-            await chrome.tabs.group({ tabIds: tabsToMove.map((t) => t.id), groupId });
+            await chrome.tabs.group({ tabIds: tabsToMove.map((t) => t.id), groupId: existingGroupId });
             for (const t of tabsToMove) movedTabIds.add(t.id);
           }
-          windowAutoGroups[rule.id] = groupId;
-          ruleGroupIds.add(groupId);
+          groupId = existingGroupId;
         } else {
-          groupId = await createGroup(tabIds, windowId, rule);
-          windowAutoGroups[rule.id] = groupId;
-          for (const t of tabs) movedTabIds.add(t.id);
-          (newGroupsByWindow[windowId] ??= []).push(groupId);
+          // No group tracked for this rule yet. Before creating a new one,
+          // check for an unmanaged tab group in this window with the exact
+          // same name — likely left behind by a deleted/recreated rule of
+          // the same name — and adopt it instead of making a duplicate.
+          const adoptable = await findAdoptableGroup(windowId, rule.name, ruleGroupIds);
+          if (adoptable !== null) {
+            groupId = adoptable;
+            const tabsToMove = tabs.filter((t) => t.groupId !== groupId);
+            if (tabsToMove.length > 0) {
+              await chrome.tabs.group({ tabIds: tabsToMove.map((t) => t.id), groupId });
+              for (const t of tabsToMove) movedTabIds.add(t.id);
+            }
+            windowAutoGroups[rule.id] = groupId;
+            ruleGroupIds.add(groupId);
+          } else {
+            groupId = await createGroup(tabIds, windowId);
+            windowAutoGroups[rule.id] = groupId;
+            for (const t of tabs) movedTabIds.add(t.id);
+            (newGroupsByWindow[windowId] ??= []).push(groupId);
+          }
         }
-      }
 
-      // Keep the live tab group's title/colour in sync with the rule,
-      // even when the group already existed and no tabs needed to move —
-      // otherwise renaming/recolouring a rule would never reach the browser.
-      try {
+        // Keep the live tab group's title/colour in sync with the rule,
+        // even when the group already existed and no tabs needed to move —
+        // otherwise renaming/recolouring a rule would never reach the browser.
         const updateProps = { title: rule.name, color: rule.color };
         if (!groupIsValid) updateProps.collapsed = true;
         await chrome.tabGroups.update(groupId, updateProps);
-      } catch {
+      } catch (err) {
+        console.warn(`Tab Tidy: failed to apply rule "${rule.name}" in window ${windowId}`, err);
         delete windowAutoGroups[rule.id];
       }
     }
@@ -236,10 +241,12 @@ async function findAdoptableGroup(windowId, ruleName, ruleGroupIds) {
   return match ? match.id : null;
 }
 
-async function createGroup(tabIds, windowId, rule) {
-  const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } });
-  await chrome.tabGroups.update(groupId, { title: rule.name, color: rule.color });
-  return groupId;
+// Title/colour are applied by the caller's guarded sync pass right after
+// this returns — not duplicated here, since chrome.tabs.group() can hand
+// back a group whose tabs were closed a moment later (e.g. by dedupe),
+// leaving the group itself gone before an unguarded update would run.
+async function createGroup(tabIds, windowId) {
+  return chrome.tabs.group({ tabIds, createProperties: { windowId } });
 }
 
 // Clean up stored group IDs for rules that no longer exist

@@ -16,6 +16,7 @@ export const STORAGE_KEYS = {
   viewingRule: 'viewingRule',
   compactRulesView: 'compactRulesView',
   theme: 'theme',
+  sidePanelSort: 'sidePanelSort',
 };
 
 export const TAB_GROUP_COLORS = [

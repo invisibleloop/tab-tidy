@@ -1,7 +1,29 @@
-import { getGroupRules, getAutoGroups, getViewingRule } from '../shared/storage.js';
+import { getGroupRules, getAutoGroups, getViewingRule, getSidePanelSort, saveSidePanelSort } from '../shared/storage.js';
 import { initTheme } from '../shared/theme.js';
 
 initTheme();
+
+// Lucide icons (stroke-based, 24x24 viewBox), inlined so no external
+// requests are needed. currentColor lets the button's CSS color apply.
+const ICON_ARROW_UP_DOWN = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>';
+const ICON_ARROW_DOWN_AZ = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="M20 8h-5"/><path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"/><path d="M15 14h5l-5 6h5"/></svg>';
+const ICON_ARROW_DOWN_ZA = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 4 4 4-4"/><path d="M7 4v16"/><path d="M15 4h5l-5 6h5"/><path d="M15 20v-3.5a2.5 2.5 0 0 1 5 0V20"/><path d="M20 18h-5"/></svg>';
+
+const SORT_ORDER = ['default', 'az', 'za'];
+const SORT_ICONS = { default: ICON_ARROW_UP_DOWN, az: ICON_ARROW_DOWN_AZ, za: ICON_ARROW_DOWN_ZA };
+const SORT_LABELS = {
+  default: 'Sort: default order (click for A–Z)',
+  az: 'Sort: A–Z (click for Z–A)',
+  za: 'Sort: Z–A (click for default order)',
+};
+
+function sortTabs(tabs, sort) {
+  if (sort === 'default') return tabs;
+  const sorted = [...tabs].sort((a, b) =>
+    (a.title || a.url).localeCompare(b.title || b.url, undefined, { sensitivity: 'base' })
+  );
+  return sort === 'za' ? sorted.reverse() : sorted;
+}
 
 function colorSwatch(color) {
   const MAP = {
@@ -25,8 +47,27 @@ const headerCount = document.getElementById('header-count');
 const cardList = document.getElementById('card-list');
 const emptyMsg = document.getElementById('empty-msg');
 const noSelectionMsg = document.getElementById('no-selection-msg');
+const sortBtn = document.getElementById('btn-sort');
 
 let currentGroupId = null;
+let currentRuleId = null;
+let currentSort = 'default';
+
+function renderSortButton() {
+  sortBtn.innerHTML = SORT_ICONS[currentSort];
+  sortBtn.title = SORT_LABELS[currentSort];
+  sortBtn.setAttribute('aria-label', SORT_LABELS[currentSort]);
+  sortBtn.classList.toggle('active', currentSort !== 'default');
+  sortBtn.disabled = !currentRuleId;
+}
+
+sortBtn.addEventListener('click', async () => {
+  if (!currentRuleId) return;
+  currentSort = SORT_ORDER[(SORT_ORDER.indexOf(currentSort) + 1) % SORT_ORDER.length];
+  renderSortButton();
+  await saveSidePanelSort(currentRuleId, currentSort);
+  render();
+});
 
 async function resolveGroup() {
   const viewing = await getViewingRule();
@@ -133,11 +174,21 @@ function renderCards(tabs) {
   }
 }
 
+// Load and apply the sort preference for whichever rule is now being
+// shown, only re-fetching from storage when the rule actually changed.
+async function syncSortForRule(ruleId) {
+  if (ruleId === currentRuleId) return;
+  currentRuleId = ruleId;
+  currentSort = ruleId ? await getSidePanelSort(ruleId) : 'default';
+  renderSortButton();
+}
+
 async function render() {
   const resolved = await resolveGroup();
 
   if (resolved.status === 'no-selection') {
     currentGroupId = null;
+    await syncSortForRule(null);
     headerTitle.textContent = 'Rule tabs';
     headerSwatch.style.background = 'transparent';
     headerCount.textContent = '';
@@ -150,6 +201,7 @@ async function render() {
 
   if (resolved.status === 'no-group') {
     currentGroupId = null;
+    await syncSortForRule(resolved.rule.id);
     headerTitle.textContent = resolved.rule.name;
     headerSwatch.style.background = colorSwatch(resolved.rule.color);
     headerCount.textContent = '';
@@ -163,6 +215,7 @@ async function render() {
   noSelectionMsg.classList.add('hidden');
   const { rule, groupId } = resolved;
   currentGroupId = groupId;
+  await syncSortForRule(rule.id);
 
   headerTitle.textContent = rule.name;
   headerSwatch.style.background = colorSwatch(rule.color);
@@ -175,7 +228,7 @@ async function render() {
   }
 
   headerCount.textContent = tabs.length > 0 ? String(tabs.length) : '';
-  renderCards(tabs);
+  renderCards(sortTabs(tabs, currentSort));
 }
 
 chrome.tabs.onCreated.addListener(() => render());
@@ -202,4 +255,5 @@ chrome.storage.session.onChanged.addListener((changes) => {
   if (changes.viewingRule) render();
 });
 
+renderSortButton();
 render();
