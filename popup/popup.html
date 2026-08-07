@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tab Tidy</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <img src="../icons/icon48.png" alt="" class="header-icon" />
+    <h1>Tab Tidy</h1>
+    <button id="btn-theme" class="header-icon-btn" title="Toggle theme" aria-label="Toggle theme"></button>
+    <button id="btn-compact-view" class="header-icon-btn" title="Toggle compact view" aria-label="Toggle compact view"></button>
+  </header>
+
+  <main>
+    <!-- Auto-Group Rules -->
+    <section id="rules" class="tab-panel">
+      <div id="rules-list" class="tab-list"></div>
+      <p id="rules-empty" class="empty-msg hidden">No rules yet. Add one to auto-group tabs by URL.</p>
+      <label class="interval-row">
+        Apply every
+        <select id="apply-interval"></select>
+      </label>
+      <div class="bulk-actions">
+        <button id="btn-add-rule">+ Add Rule</button>
+        <button id="btn-apply-rules">Apply Now</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

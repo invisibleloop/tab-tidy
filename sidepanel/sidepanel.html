@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tab Tidy — Rule tabs</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header>
+    <span class="header-swatch" id="header-swatch"></span>
+    <h1 id="header-title">Rule tabs</h1>
+    <span class="header-count" id="header-count"></span>
+  </header>
+
+  <main>
+    <div id="card-list" class="card-list"></div>
+    <p id="empty-msg" class="empty-msg hidden">No open tabs in this group.</p>
+    <p id="no-selection-msg" class="empty-msg hidden">Open this panel from a rule in the extension popup.</p>
+  </main>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
