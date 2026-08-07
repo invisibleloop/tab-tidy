@@ -2,6 +2,12 @@
 
 A Chrome extension that automatically groups open tabs into named, coloured tab groups based on URL match rules you define. It never closes tabs — only organises them.
 
+<p>
+  <img src="docs/screenshots/popup.png" alt="Tab Tidy popup showing a rule list" width="280" />
+  <img src="docs/screenshots/add-rule.png" alt="Add rule form" width="280" />
+  <img src="docs/screenshots/sidepanel.png" alt="Side panel showing tabs in a group" width="280" />
+</p>
+
 ## Features
 
 - **Rules** — define a name, a match pattern (plain text or regex), and a colour. Matching tabs get grouped per-window into a tab group named after the rule.
