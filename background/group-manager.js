@@ -13,19 +13,6 @@ function buildMatcher(rule) {
   }
 }
 
-// Snapshot the ordering of ungrouped tabs only. Existing groups (rule-owned
-// or manual) are never repositioned by this module, so their order doesn't
-// need tracking — only ungrouped tabs can get shuffled as a side effect of
-// chrome.tabs.group() relocating a tab next to its new group.
-async function snapshotUngroupedOrder(windowId) {
-  const tabs = await chrome.tabs.query({ windowId });
-  return tabs
-    .filter((tab) => !tab.pinned)
-    .filter((tab) => !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://'))
-    .filter((tab) => tab.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE)
-    .map((tab) => tab.id);
-}
-
 // Move a freshly created group to sit immediately after the last existing
 // group in the window (or right after any pinned tabs if there are no
 // other groups yet), so new groups collect at the left rather than
@@ -52,20 +39,6 @@ async function positionGroupAfterExisting(windowId, groupId) {
   }
 }
 
-// Restore the relative order of previously-ungrouped tabs that are still
-// ungrouped (tabs that just got grouped are excluded by the caller). This
-// never moves a group — groups keep whatever position Chrome naturally
-// gives them, so manually-created groups are never touched.
-async function restoreUngroupedOrder(tabIds) {
-  for (const tabId of tabIds) {
-    try {
-      await chrome.tabs.move(tabId, { index: -1 });
-    } catch {
-      // Tab no longer exists; skip
-    }
-  }
-}
-
 export async function applyGroupRules({ automatic = false } = {}) {
   const rules = await getGroupRules();
   const enabledRules = rules.filter((r) => r.enabled && (!automatic || r.autoApply !== false));
@@ -79,17 +52,6 @@ export async function applyGroupRules({ automatic = false } = {}) {
   const ruleGroupIds = new Set(
     Object.values(autoGroups).flatMap((windowGroups) => Object.values(windowGroups))
   );
-
-  // Snapshot the ungrouped-tab order per window before making any changes
-  const windowIds = [...new Set(allTabs.map((t) => t.windowId))];
-  const ungroupedOrderBefore = {};
-  for (const windowId of windowIds) {
-    ungroupedOrderBefore[windowId] = await snapshotUngroupedOrder(windowId);
-  }
-
-  // Tabs that get newly grouped this run should stay wherever chrome.tabs.group()
-  // puts them, not snap back to their pre-group ungrouped slot.
-  const movedTabIds = new Set();
 
   // Groups created this run, so we can position them at the left after
   // the tab order has been restored (positioning them earlier would just
@@ -169,7 +131,6 @@ export async function applyGroupRules({ automatic = false } = {}) {
           const tabsToMove = tabs.filter((t) => t.groupId !== existingGroupId);
           if (tabsToMove.length > 0) {
             await chrome.tabs.group({ tabIds: tabsToMove.map((t) => t.id), groupId: existingGroupId });
-            for (const t of tabsToMove) movedTabIds.add(t.id);
           }
           groupId = existingGroupId;
         } else {
@@ -183,14 +144,12 @@ export async function applyGroupRules({ automatic = false } = {}) {
             const tabsToMove = tabs.filter((t) => t.groupId !== groupId);
             if (tabsToMove.length > 0) {
               await chrome.tabs.group({ tabIds: tabsToMove.map((t) => t.id), groupId });
-              for (const t of tabsToMove) movedTabIds.add(t.id);
             }
             windowAutoGroups[rule.id] = groupId;
             ruleGroupIds.add(groupId);
           } else {
             groupId = await createGroup(tabIds, windowId);
             windowAutoGroups[rule.id] = groupId;
-            for (const t of tabs) movedTabIds.add(t.id);
             (newGroupsByWindow[windowId] ??= []).push(groupId);
           }
         }
@@ -210,20 +169,10 @@ export async function applyGroupRules({ automatic = false } = {}) {
 
   await saveAutoGroups(autoGroups);
 
-  // Restore the relative order of tabs that are still ungrouped, in windows
-  // where a tab was actually moved this run. Groups — rule-owned or
-  // manually created — are never repositioned here.
-  const touchedWindowIds = new Set(
-    [...movedTabIds].map((tabId) => allTabs.find((t) => t.id === tabId)?.windowId)
-  );
-  for (const windowId of windowIds) {
-    if (!touchedWindowIds.has(windowId)) continue;
-    const stillUngrouped = ungroupedOrderBefore[windowId].filter((tabId) => !movedTabIds.has(tabId));
-    await restoreUngroupedOrder(stillUngrouped);
-  }
-
-  // Now that ungrouped tabs are back in their original relative order, pull
-  // any newly created groups to the left, right after existing groups.
+  // Pull any newly created groups to the left, right after existing groups.
+  // chrome.tabs.group() only removes tabs from the ungrouped sequence and
+  // reinserts them next to their group — it never changes the relative
+  // order of the other ungrouped tabs, so nothing else needs restoring.
   for (const [windowIdStr, groupIds] of Object.entries(newGroupsByWindow)) {
     const windowId = Number(windowIdStr);
     for (const groupId of groupIds) {
