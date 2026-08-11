@@ -39,7 +39,21 @@ async function positionGroupAfterExisting(windowId, groupId) {
   }
 }
 
-export async function applyGroupRules({ automatic = false } = {}) {
+// applyGroupRules reads autoGroups, mutates it, and writes it back at the
+// end. The alarm and manual "Apply Now" can both trigger it independently,
+// and with several awaited Chrome API calls per rule a run can take long
+// enough for a second call to start before the first has saved — each
+// would then read a stale snapshot and the later save clobbers the
+// earlier one's changes, including group ids Chrome had already
+// recreated. Queue calls so only one run is ever in flight at a time.
+let applyQueue = Promise.resolve();
+
+export function applyGroupRules(options) {
+  applyQueue = applyQueue.then(() => applyGroupRulesInternal(options), () => applyGroupRulesInternal(options));
+  return applyQueue;
+}
+
+async function applyGroupRulesInternal({ automatic = false } = {}) {
   const rules = await getGroupRules();
   const enabledRules = rules.filter((r) => r.enabled && (!automatic || r.autoApply !== false));
   if (enabledRules.length === 0) return;
@@ -81,9 +95,10 @@ export async function applyGroupRules({ automatic = false } = {}) {
 
       let groupId;
       let groupIsValid = false;
+      let existingGroup = null;
       if (existingGroupId !== undefined) {
         try {
-          await chrome.tabGroups.get(existingGroupId);
+          existingGroup = await chrome.tabGroups.get(existingGroupId);
           groupIsValid = true;
         } catch {
           delete windowAutoGroups[rule.id];
@@ -94,13 +109,14 @@ export async function applyGroupRules({ automatic = false } = {}) {
       if (rule.dedupe) {
         // Tabs already sitting in this rule's group are never "incoming
         // duplicates" — only tabs that still need to be moved in can be
-        // closed as dupes of something already present.
-        const alreadyInGroup = groupIsValid
-          ? windowTabs.filter((t) => t.groupId === existingGroupId)
-          : [];
-        const incoming = groupIsValid
-          ? windowTabs.filter((t) => t.groupId !== existingGroupId)
-          : windowTabs;
+        // closed as dupes of something already present. When the tracked
+        // group id is stale (groupIsValid is false), tabs still reporting
+        // that groupId belong to a group Chrome has already destroyed —
+        // treat them the same as "already in group" (leave them alone)
+        // rather than comparing them against each other as fresh
+        // duplicates, which could close a tab that was never a dupe.
+        const alreadyInGroup = windowTabs.filter((t) => t.groupId === existingGroupId);
+        const incoming = windowTabs.filter((t) => t.groupId !== existingGroupId);
 
         const seenUrls = new Set(alreadyInGroup.map((t) => t.url));
         const toClose = [];
@@ -154,12 +170,19 @@ export async function applyGroupRules({ automatic = false } = {}) {
           }
         }
 
-        // Keep the live tab group's title/colour in sync with the rule,
-        // even when the group already existed and no tabs needed to move —
-        // otherwise renaming/recolouring a rule would never reach the browser.
-        const updateProps = { title: rule.name, color: rule.color };
-        if (!groupIsValid) updateProps.collapsed = true;
-        await chrome.tabGroups.update(groupId, updateProps);
+        // Keep the live tab group's title/colour in sync with the rule —
+        // but only call update() when something has actually changed.
+        // Chrome visibly reflows the tab strip on every tabGroups.update()
+        // call even when the values are identical, which read as a
+        // shift-and-settle flicker on every periodic apply.
+        const needsUpdate = !groupIsValid
+          || existingGroup?.title !== rule.name
+          || existingGroup?.color !== rule.color;
+        if (needsUpdate) {
+          const updateProps = { title: rule.name, color: rule.color };
+          if (!groupIsValid) updateProps.collapsed = true;
+          await chrome.tabGroups.update(groupId, updateProps);
+        }
       } catch (err) {
         console.warn(`Tab Tidy: failed to apply rule "${rule.name}" in window ${windowId}`, err);
         delete windowAutoGroups[rule.id];
