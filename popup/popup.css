@@ -11,6 +11,7 @@
   --danger: #d93025;
   --danger-bg-hover: #fce8e6;
   --shadow: rgba(60, 64, 67, 0.3);
+  --rule-shadow: rgba(60, 64, 67, 0.1);
   --code-bg: color-mix(in srgb, black 12%, #f8f9fa);
 }
 
@@ -28,6 +29,7 @@
     --danger: #f28b82;
     --danger-bg-hover: #3c2a2a;
     --shadow: rgba(0, 0, 0, 0.5);
+    --rule-shadow: rgba(0, 0, 0, 0.5);
     --code-bg: color-mix(in srgb, black 25%, #35363a);
   }
 }
@@ -45,6 +47,7 @@
   --danger: #f28b82;
   --danger-bg-hover: #3c2a2a;
   --shadow: rgba(0, 0, 0, 0.5);
+  --rule-shadow: rgba(0, 0, 0, 0.5);
   --code-bg: color-mix(in srgb, black 25%, #35363a);
 }
 
@@ -60,6 +63,7 @@
   --accent-contrast: #ffffff;
   --danger: #d93025;
   --danger-bg-hover: #fce8e6;
+  --rule-shadow: rgba(60, 64, 67, 0.1);
   --shadow: rgba(60, 64, 67, 0.3);
   --code-bg: color-mix(in srgb, black 12%, #f8f9fa);
 }
@@ -244,13 +248,13 @@ main {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  box-shadow: 0 1px 2px var(--shadow);
+  box-shadow: 0 1px 2px var(--rule-shadow);
   transition: background-color 0.1s ease, box-shadow 0.1s ease;
 }
 
 .rule-item:hover {
   background: var(--surface-hover);
-  box-shadow: 0 1px 4px var(--shadow);
+  box-shadow: 0 1px 4px var(--rule-shadow);
 }
 
 .rule-item.dragging {

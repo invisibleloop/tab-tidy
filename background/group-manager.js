@@ -13,29 +13,38 @@ function buildMatcher(rule) {
   }
 }
 
-// Move a freshly created group to sit immediately after the last existing
-// group in the window (or right after any pinned tabs if there are no
-// other groups yet), so new groups collect at the left rather than
-// wherever their matching tabs happened to be.
-async function positionGroupAfterExisting(windowId, groupId) {
+// Move each of this window's rule-owned groups into the given order,
+// left to right, starting right after any pinned tabs. Groups not in
+// orderedGroupIds (manually-created ones) and ungrouped tabs are left
+// wherever Chrome naturally places them relative to this sequence.
+async function orderGroupsByRule(windowId, orderedGroupIds) {
   const currentTabs = await chrome.tabs.query({ windowId });
-  const pinnedCount = currentTabs.filter((t) => t.pinned).length;
 
-  // Count through the leading run of grouped tabs (skipping our own group,
-  // which may already be among them) and stop at the first ungrouped tab —
-  // that boundary is "as far left as possible, right of existing groups".
-  let index = pinnedCount;
+  // Skip entirely if the groups are already in the requested order —
+  // chrome.tabGroups.move() visibly reflows the tab strip even when
+  // moving a group to the index it's already at.
+  const seen = new Set();
+  const currentRuleGroupOrder = [];
   for (const tab of currentTabs) {
-    if (tab.pinned) continue;
-    if (tab.groupId === groupId) continue;
-    if (tab.groupId === chrome.tabGroups.TAB_GROUP_ID_NONE) break;
-    index += 1;
+    if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE && orderedGroupIds.includes(tab.groupId) && !seen.has(tab.groupId)) {
+      seen.add(tab.groupId);
+      currentRuleGroupOrder.push(tab.groupId);
+    }
   }
+  const alreadyInOrder = currentRuleGroupOrder.length === orderedGroupIds.length
+    && currentRuleGroupOrder.every((id, i) => id === orderedGroupIds[i]);
+  if (alreadyInOrder) return;
 
-  try {
-    await chrome.tabGroups.move(groupId, { windowId, index });
-  } catch {
-    // Group may have been closed already; nothing to do
+  const pinnedCount = currentTabs.filter((t) => t.pinned).length;
+  let index = pinnedCount;
+  for (const groupId of orderedGroupIds) {
+    try {
+      await chrome.tabGroups.move(groupId, { windowId, index });
+      const groupTabs = await chrome.tabs.query({ windowId, groupId });
+      index += groupTabs.length;
+    } catch {
+      // Group no longer exists; skip without advancing the index
+    }
   }
 }
 
@@ -66,11 +75,6 @@ async function applyGroupRulesInternal({ automatic = false } = {}) {
   const ruleGroupIds = new Set(
     Object.values(autoGroups).flatMap((windowGroups) => Object.values(windowGroups))
   );
-
-  // Groups created this run, so we can position them at the left after
-  // the tab order has been restored (positioning them earlier would just
-  // get undone by the restore pass below).
-  const newGroupsByWindow = {};
 
   for (const rule of enabledRules) {
     const matches = buildMatcher(rule);
@@ -166,7 +170,6 @@ async function applyGroupRulesInternal({ automatic = false } = {}) {
           } else {
             groupId = await createGroup(tabIds, windowId);
             windowAutoGroups[rule.id] = groupId;
-            (newGroupsByWindow[windowId] ??= []).push(groupId);
           }
         }
 
@@ -192,14 +195,19 @@ async function applyGroupRulesInternal({ automatic = false } = {}) {
 
   await saveAutoGroups(autoGroups);
 
-  // Pull any newly created groups to the left, right after existing groups.
-  // chrome.tabs.group() only removes tabs from the ungrouped sequence and
-  // reinserts them next to their group — it never changes the relative
-  // order of the other ungrouped tabs, so nothing else needs restoring.
-  for (const [windowIdStr, groupIds] of Object.entries(newGroupsByWindow)) {
+  // Reorder every window's rule-owned groups to match the rules list's
+  // top-to-bottom order, left to right. Runs on every apply (not just when
+  // a group is newly created) so dragging a rule in the popup — or
+  // manually reordering a group in Chrome itself — is corrected on the
+  // next apply. Groups not owned by any rule are left untouched.
+  const ruleOrder = rules.map((r) => r.id);
+  for (const [windowIdStr, windowAutoGroups] of Object.entries(autoGroups)) {
     const windowId = Number(windowIdStr);
-    for (const groupId of groupIds) {
-      await positionGroupAfterExisting(windowId, groupId);
+    const orderedGroupIds = ruleOrder
+      .map((ruleId) => windowAutoGroups[ruleId])
+      .filter((groupId) => groupId !== undefined);
+    if (orderedGroupIds.length > 0) {
+      await orderGroupsByRule(windowId, orderedGroupIds);
     }
   }
 }
